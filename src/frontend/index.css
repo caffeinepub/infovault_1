@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Sora";
+  src: url("/assets/fonts/Sora.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/assets/fonts/GeistMono.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Cabinet Grotesk";
+  src: url("/assets/fonts/CabinetGrotesk.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+    /* Dark vault theme */
+    --background: 0.13 0.008 250;
+    --foreground: 0.92 0.01 250;
+    --card: 0.17 0.012 250;
+    --card-foreground: 0.92 0.01 250;
+    --popover: 0.19 0.012 250;
+    --popover-foreground: 0.92 0.01 250;
+    --primary: 0.72 0.14 195;
+    --primary-foreground: 0.1 0.02 250;
+    --secondary: 0.22 0.015 250;
+    --secondary-foreground: 0.88 0.01 250;
+    --muted: 0.2 0.012 250;
+    --muted-foreground: 0.6 0.02 250;
+    --accent: 0.28 0.02 250;
+    --accent-foreground: 0.92 0.01 250;
+    --destructive: 0.62 0.2 25;
+    --destructive-foreground: 0.98 0 0;
+    --border: 0.25 0.02 250;
+    --input: 0.22 0.015 250;
+    --ring: 0.72 0.14 195;
+    --chart-1: 0.72 0.14 195;
+    --chart-2: 0.65 0.15 160;
+    --chart-3: 0.6 0.12 280;
+    --chart-4: 0.75 0.12 75;
+    --chart-5: 0.65 0.2 25;
+    --sidebar: 0.15 0.01 250;
+    --sidebar-foreground: 0.92 0.01 250;
+    --sidebar-primary: 0.72 0.14 195;
+    --sidebar-primary-foreground: 0.1 0.02 250;
+    --sidebar-accent: 0.22 0.015 250;
+    --sidebar-accent-foreground: 0.92 0.01 250;
+    --sidebar-border: 0.25 0.02 250;
+    --sidebar-ring: 0.72 0.14 195;
+
+    /* Teal accent */
+    --teal: 0.72 0.14 195;
+    --teal-dim: 0.55 0.1 195;
+    --teal-glow: 0.72 0.14 195;
+    --vault-surface: 0.17 0.012 250;
+    --vault-raised: 0.21 0.015 250;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: oklch(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(var(--border));
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(var(--muted-foreground));
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid oklch(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .font-mono-data {
+    font-family: "Geist Mono", monospace;
+    font-feature-settings: "tnum";
+  }
+
+  .text-teal {
+    color: oklch(var(--teal));
+  }
+
+  .bg-teal {
+    background-color: oklch(var(--teal));
+  }
+
+  .border-teal {
+    border-color: oklch(var(--teal));
+  }
+
+  .glow-teal {
+    box-shadow: 0 0 20px oklch(var(--teal) / 0.3);
+  }
+
+  .vault-card {
+    background: oklch(var(--vault-surface));
+    border: 1px solid oklch(var(--border));
+  }
+
+  .vault-raised {
+    background: oklch(var(--vault-raised));
+    border: 1px solid oklch(var(--border));
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
