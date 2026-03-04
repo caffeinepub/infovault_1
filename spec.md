@@ -1,69 +1,50 @@
 # InfoVault
 
 ## Current State
-
-InfoVault is a personal information management app with:
-- Internet Identity authentication
-- Accounts vault: store service credentials (serviceName, username, password, notes) with masked password display, show/hide toggle, copy, edit, delete, and search
-- Documents safe: upload files via blob-storage, list with type/size/date metadata, delete
-- User profile: display name setup on first login
-- Backend stores accounts as `Map<Principal, Map<Text, Account>>` and documents as `Map<Principal, Map<Text, Document>>`, both keyed by service name / blobId
-
-Missing from current backend: category/tag fields, favorite flag, lastUpdatedAt timestamps, document expiry date, 2FA notes field on accounts.
+- Documents tab allows uploading files (via blob storage), viewing a list with metadata (name, type, size, date), and actions: favorite, edit metadata, delete.
+- Categories for both documents and accounts are hardcoded constant arrays (`DOC_CATEGORIES`, `ACCOUNT_CATEGORIES`) -- users cannot create their own.
+- No view or download functionality exists for uploaded documents.
+- `StorageClient.getDirectURL(hash)` is available and returns a direct URL to retrieve a blob from storage.
+- Enrichment data (category, favorite, expiry, etc.) is stored in localStorage via `localEnrichment.ts`.
 
 ## Requested Changes (Diff)
 
 ### Add
-
-**Security & Access**
-- Password Generator: inline tool in the account add/edit form — generates random passwords with configurable length (8–32) and toggleable character sets (uppercase, lowercase, numbers, symbols); generates on button click
-- Password Strength Indicator: visual strength meter (Weak/Fair/Strong/Very Strong) with color-coded bar shown in real-time as user types password in add/edit form
-- Auto-lock / Session Timeout: after 5 minutes of inactivity, clear the auth session and redirect to login with a "Session expired" toast
-
-**Organization**
-- Categories & Tags: accounts can have an optional category (Banking, Work, Social, Shopping, Entertainment, Other); documents can have an optional category (ID, Contract, Receipt, Medical, Financial, Other); categories shown as colored badges; filterable by category via dropdown
-- Search & Filter: already exists for accounts; add to documents tab too; add category filter dropdown to both tabs
-- Favorites / Pin: accounts and documents each have a `favorite` boolean; pinned items appear at top of list with a star icon; click star to toggle
-
-**Documents**
-- Document Categories: as above, filter/badge per category
-- Expiry Reminders: documents can have an optional `expiryDate` (Text, ISO date string); shown in document row; items expiring within 30 days shown with a yellow warning badge; expired items shown with a red badge
-
-**Accounts / Credentials**
-- Two-Factor Auth Notes: add a `twoFactorNotes` field to accounts (store backup codes, TOTP secrets)
-- Last Updated Timestamps: accounts gain a `updatedAt` field; shown in the account row as "Updated X days ago"
-- Breach Alerts (simulated): on the accounts list, flag any account whose password is fewer than 8 characters or reused across multiple accounts with a red shield icon tooltip
-
-**Profile & Settings**
-- Security Dashboard: new "Security" tab in the main dashboard showing: total accounts, total documents, count of weak passwords, count of reused passwords, count of expiring documents, count of favorites; visual summary cards
-- Export / Backup: "Export Vault" button on the Security tab that downloads a JSON file of all accounts and documents (passwords included) as a local file; no server involvement
-- Dark Mode Toggle: toggle in the header to switch between dark and light themes; persisted to localStorage
+- **Download button** on each document row (next to edit/delete), triggers browser download of the file using the blob URL from `StorageClient.getDirectURL(blobId)`.
+- **Click-to-view on document name**: clicking the document name/description opens a viewer modal/dialog showing the file in its original form:
+  - Images (image/*): render as `<img>` tag
+  - PDFs (application/pdf): render in an `<iframe>` or `<object>` tag
+  - Videos (video/*): render in a `<video>` tag
+  - Audio (audio/*): render in an `<audio>` tag
+  - Other file types: show a "Preview not available" message with a prominent download button
+- **Custom categories for Documents**: replace the hardcoded `DOC_CATEGORIES` const array with a dynamic list stored in localStorage. Add a "+ New Category" option at the bottom of the category select dropdown in both the upload modal and edit modal, which opens a small inline input (or popover) to type and save a custom category name. Custom categories are stored in localStorage alongside the enrichment data (per user/principal). The filter dropdown in the toolbar also shows custom categories.
+- **Custom categories for Accounts**: same pattern -- replace hardcoded `ACCOUNT_CATEGORIES` with a dynamic list from localStorage. Add "+ New Category" to the category select in the Add/Edit Account modal and in the filter toolbar.
 
 ### Modify
-
-- `Account` backend type: add `category`, `favorite`, `twoFactorNotes`, `updatedAt` fields
-- `Document` backend type: add `category`, `favorite`, `expiryDate` fields
-- `createAccount` and `updateAccount` backend functions: accept new fields
-- `createDocument` backend function: accept new fields
-- `updateDocument` (new): allow updating document metadata (category, favorite, expiryDate)
-- Dashboard: add "Security" tab alongside Accounts and Documents
-- Header: add dark mode toggle button
-- AccountsTab: category filter dropdown, favorites at top, strength meter, generator, 2FA notes field, updatedAt display, breach alert icons
-- DocumentsTab: search input, category filter dropdown, favorites at top, expiry date field and badges, update document metadata
+- `localEnrichment.ts`: add storage for custom document categories and custom account categories (arrays in `EnrichmentData`), with helper functions and hooks to add/read them.
+- `DocumentsTab.tsx`: wire up download button, document name click -> viewer modal, and dynamic category management.
+- `AccountsTab.tsx`: wire up dynamic category management (same pattern as documents).
+- `DocumentRow` component: add download icon button; make description text a clickable link/button that opens the viewer.
 
 ### Remove
-
-Nothing removed.
+- Hardcoded `DOC_CATEGORIES` and `ACCOUNT_CATEGORIES` constant arrays (replace with dynamic lists that start with the same defaults).
 
 ## Implementation Plan
+1. Update `localEnrichment.ts`:
+   - Add `customDocCategories: string[]` and `customAccountCategories: string[]` to `EnrichmentData`.
+   - Add `addDocCategory` / `addAccountCategory` helper functions.
+   - Expose `addDocCategory` / `addAccountCategory` in the `useEnrichment` hook.
+   - Default category lists remain the same; custom ones are appended.
 
-1. Update Motoko backend: extend Account and Document types with new fields; update create/update functions to accept new fields; add updateDocument function
-2. Update backend.d.ts to reflect new types and functions
-3. Update useQueries.ts hooks: update createAccount/updateAccount/createDocument to pass new fields; add useUpdateDocument hook
-4. Build PasswordGenerator component (inline in account form)
-5. Build PasswordStrengthIndicator component
-6. Update AccountsTab: add category, favorite, twoFactorNotes fields to form; strength meter; generator; updatedAt; category filter; favorites pinned; breach alert
-7. Update DocumentsTab: add search, category filter, favorite toggle, expiryDate field; update document metadata via updateDocument
-8. Build SecurityDashboard component: summary stats cards, export vault button
-9. Update Dashboard: add Security tab, dark mode toggle in header, wire theme context
-10. Add dark mode: ThemeContext with localStorage persistence; toggle in Header; apply `dark` class to root
+2. Update `DocumentsTab.tsx`:
+   - Replace hardcoded `DOC_CATEGORIES` with a derived list: defaults + custom categories from enrichment.
+   - Add download button to `DocumentRow` (uses `StorageClient.getDirectURL` + `useActor` to build the URL, then triggers `<a download>` click).
+   - Make document name/description a clickable button that sets a `viewTarget` state.
+   - Add a viewer `<Dialog>` that fetches the blob URL and renders appropriately based on `fileType`.
+   - Add "+ New Category" as the last item in category selects; clicking it shows an inline input to create and save a custom category.
+
+3. Update `AccountsTab.tsx`:
+   - Replace hardcoded `ACCOUNT_CATEGORIES` with defaults + custom categories from enrichment.
+   - Add "+ New Category" option in the category select dropdowns (Add/Edit modal and filter toolbar).
+
+4. Use `useActor` and `StorageClient` (from `useActor` hook or direct instantiation with config) to generate download/view URLs per document.

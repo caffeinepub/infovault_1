@@ -17,9 +17,29 @@ export interface DocumentEnrichment {
   overrideDescription?: string;
 }
 
+export const DEFAULT_DOC_CATEGORIES = [
+  "ID",
+  "Contract",
+  "Receipt",
+  "Medical",
+  "Financial",
+  "Other",
+];
+
+export const DEFAULT_ACCOUNT_CATEGORIES = [
+  "Banking",
+  "Work",
+  "Social",
+  "Shopping",
+  "Entertainment",
+  "Other",
+];
+
 export interface EnrichmentData {
   accounts: Record<string, AccountEnrichment>;
   documents: Record<string, DocumentEnrichment>;
+  customDocCategories: string[];
+  customAccountCategories: string[];
 }
 
 function getStorageKey(principalText: string): string {
@@ -29,14 +49,31 @@ function getStorageKey(principalText: string): string {
 function loadEnrichment(principalText: string): EnrichmentData {
   try {
     const raw = localStorage.getItem(getStorageKey(principalText));
-    if (!raw) return { accounts: {}, documents: {} };
+    if (!raw)
+      return {
+        accounts: {},
+        documents: {},
+        customDocCategories: [...DEFAULT_DOC_CATEGORIES],
+        customAccountCategories: [...DEFAULT_ACCOUNT_CATEGORIES],
+      };
     const parsed = JSON.parse(raw);
     return {
       accounts: parsed.accounts ?? {},
       documents: parsed.documents ?? {},
+      customDocCategories: parsed.customDocCategories ?? [
+        ...DEFAULT_DOC_CATEGORIES,
+      ],
+      customAccountCategories: parsed.customAccountCategories ?? [
+        ...DEFAULT_ACCOUNT_CATEGORIES,
+      ],
     };
   } catch {
-    return { accounts: {}, documents: {} };
+    return {
+      accounts: {},
+      documents: {},
+      customDocCategories: [...DEFAULT_DOC_CATEGORIES],
+      customAccountCategories: [...DEFAULT_ACCOUNT_CATEGORIES],
+    };
   }
 }
 
@@ -86,6 +123,28 @@ export function deleteDocumentEnrichment(
   saveEnrichment(principalText, data);
 }
 
+export function addDocCategoryToStorage(
+  principalText: string,
+  category: string,
+): void {
+  const data = loadEnrichment(principalText);
+  if (!data.customDocCategories.includes(category)) {
+    data.customDocCategories = [...data.customDocCategories, category];
+  }
+  saveEnrichment(principalText, data);
+}
+
+export function addAccountCategoryToStorage(
+  principalText: string,
+  category: string,
+): void {
+  const data = loadEnrichment(principalText);
+  if (!data.customAccountCategories.includes(category)) {
+    data.customAccountCategories = [...data.customAccountCategories, category];
+  }
+  saveEnrichment(principalText, data);
+}
+
 import { useCallback, useState } from "react";
 
 export function useEnrichment(principalText: string) {
@@ -129,6 +188,22 @@ export function useEnrichment(principalText: string) {
     [principalText],
   );
 
+  const addDocCategory = useCallback(
+    (category: string) => {
+      addDocCategoryToStorage(principalText, category);
+      setEnrichment(loadEnrichment(principalText));
+    },
+    [principalText],
+  );
+
+  const addAccountCategory = useCallback(
+    (category: string) => {
+      addAccountCategoryToStorage(principalText, category);
+      setEnrichment(loadEnrichment(principalText));
+    },
+    [principalText],
+  );
+
   return {
     enrichment,
     refresh,
@@ -136,5 +211,7 @@ export function useEnrichment(principalText: string) {
     updateDocument,
     removeAccount,
     removeDocument,
+    addDocCategory,
+    addAccountCategory,
   };
 }

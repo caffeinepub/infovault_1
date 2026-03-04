@@ -52,6 +52,7 @@ import {
   Star,
   Trash2,
   Wand2,
+  X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
@@ -69,17 +70,6 @@ import { useEnrichment } from "../utils/localEnrichment";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const ACCOUNT_CATEGORIES = [
-  "Banking",
-  "Work",
-  "Social",
-  "Shopping",
-  "Entertainment",
-  "Other",
-] as const;
-
-type AccountCategory = (typeof ACCOUNT_CATEGORIES)[number] | "All";
-
 const CATEGORY_COLORS: Record<string, string> = {
   Banking: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   Work: "bg-purple-500/20 text-purple-400 border-purple-500/30",
@@ -88,6 +78,159 @@ const CATEGORY_COLORS: Record<string, string> = {
   Entertainment: "bg-pink-500/20 text-pink-400 border-pink-500/30",
   Other: "bg-secondary text-muted-foreground border-border",
 };
+
+function getCategoryColor(cat: string): string {
+  return CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.Other;
+}
+
+// ─── New Category inline input ────────────────────────────────────────────────
+
+interface NewCategoryInputProps {
+  onSave: (name: string) => void;
+  onCancel: () => void;
+  ocidPrefix: string;
+}
+
+function NewCategoryInput({
+  onSave,
+  onCancel,
+  ocidPrefix,
+}: NewCategoryInputProps) {
+  const [value, setValue] = useState("");
+
+  const handleSave = () => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    onSave(trimmed);
+    setValue("");
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.15 }}
+      className="overflow-hidden"
+    >
+      <div className="mt-2 flex gap-2 items-center p-2 rounded-lg border border-teal/30 bg-teal/5">
+        <Input
+          autoFocus
+          placeholder="Category name..."
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSave();
+            }
+            if (e.key === "Escape") onCancel();
+          }}
+          className="h-7 text-xs bg-secondary border-border text-foreground flex-1"
+          data-ocid={`${ocidPrefix}.input`}
+        />
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 px-2 text-xs bg-teal hover:bg-teal/90 text-background font-semibold"
+          onClick={handleSave}
+          disabled={!value.trim()}
+          data-ocid={`${ocidPrefix}.save_button`}
+        >
+          Add
+        </Button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Category Select with "+ New" option ─────────────────────────────────────
+
+interface CategorySelectProps {
+  value: string;
+  onValueChange: (value: string) => void;
+  categories: string[];
+  onAddCategory: (name: string) => void;
+  triggerId?: string;
+  triggerClassName?: string;
+  ocidTrigger?: string;
+  ocidPrefix: string;
+  placeholder?: string;
+  includeAll?: boolean;
+}
+
+function CategorySelect({
+  value,
+  onValueChange,
+  categories,
+  onAddCategory,
+  triggerId,
+  triggerClassName,
+  ocidTrigger,
+  ocidPrefix,
+  placeholder,
+  includeAll = false,
+}: CategorySelectProps) {
+  const [showNewInput, setShowNewInput] = useState(false);
+
+  const handleSelectChange = (v: string) => {
+    if (v === "__new__") {
+      setShowNewInput(true);
+      return;
+    }
+    onValueChange(v);
+  };
+
+  const handleSaveNew = (name: string) => {
+    onAddCategory(name);
+    onValueChange(name);
+    setShowNewInput(false);
+  };
+
+  return (
+    <div className="space-y-0">
+      <Select value={value} onValueChange={handleSelectChange}>
+        <SelectTrigger
+          id={triggerId}
+          className={triggerClassName}
+          data-ocid={ocidTrigger}
+        >
+          <SelectValue placeholder={placeholder ?? "Select category"} />
+        </SelectTrigger>
+        <SelectContent className="bg-popover border-border">
+          {includeAll && <SelectItem value="All">All Categories</SelectItem>}
+          {categories.map((cat) => (
+            <SelectItem key={cat} value={cat}>
+              {cat}
+            </SelectItem>
+          ))}
+          <SelectItem value="__new__">
+            <span className="flex items-center gap-1.5 text-teal">
+              <Plus className="w-3 h-3" />
+              New Category
+            </span>
+          </SelectItem>
+        </SelectContent>
+      </Select>
+      <AnimatePresence>
+        {showNewInput && (
+          <NewCategoryInput
+            onSave={handleSaveNew}
+            onCancel={() => setShowNewInput(false)}
+            ocidPrefix={ocidPrefix}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 // ─── Password utilities ──────────────────────────────────────────────────────
 
@@ -466,7 +609,7 @@ function AccountRow({
                 {category && category !== "Other" && (
                   <Badge
                     variant="outline"
-                    className={`text-xs px-1.5 py-0 h-4 ${CATEGORY_COLORS[category] ?? CATEGORY_COLORS.Other}`}
+                    className={`text-xs px-1.5 py-0 h-4 ${getCategoryColor(category)}`}
                   >
                     {category}
                   </Badge>
@@ -617,6 +760,7 @@ export default function AccountsTab() {
     enrichment,
     updateAccount: updateEnrichment,
     removeAccount,
+    addAccountCategory,
   } = useEnrichment(principalText);
 
   const { data: accounts, isLoading, isError } = useGetAllAccounts();
@@ -625,7 +769,8 @@ export default function AccountsTab() {
   const deleteAccount = useDeleteAccount();
 
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<AccountCategory>("All");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const accountCategories = enrichment.customAccountCategories;
   const [modalOpen, setModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [form, setForm] = useState<AccountFormData>(EMPTY_FORM);
@@ -761,25 +906,19 @@ export default function AccountsTab() {
             data-ocid="accounts.search_input"
           />
         </div>
-        <Select
-          value={categoryFilter}
-          onValueChange={(v) => setCategoryFilter(v as AccountCategory)}
-        >
-          <SelectTrigger
-            className="w-[160px] bg-secondary border-border text-foreground"
-            data-ocid="accounts.category_select"
-          >
-            <SelectValue placeholder="All Categories" />
-          </SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="All">All Categories</SelectItem>
-            {ACCOUNT_CATEGORIES.map((cat) => (
-              <SelectItem key={cat} value={cat}>
-                {cat}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="w-[180px]">
+          <CategorySelect
+            value={categoryFilter}
+            onValueChange={setCategoryFilter}
+            categories={accountCategories}
+            onAddCategory={addAccountCategory}
+            triggerClassName="w-full bg-secondary border-border text-foreground"
+            ocidTrigger="accounts.category_select"
+            ocidPrefix="account_category"
+            includeAll
+            placeholder="All Categories"
+          />
+        </div>
         <Button
           className="bg-teal hover:bg-teal/90 text-background font-semibold flex-shrink-0 gap-2"
           onClick={handleOpenAdd}
@@ -1026,25 +1165,16 @@ export default function AccountsTab() {
               <Label htmlFor="category" className="text-foreground text-sm">
                 Category
               </Label>
-              <Select
+              <CategorySelect
                 value={form.category}
                 onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}
-              >
-                <SelectTrigger
-                  id="category"
-                  className="bg-secondary border-border text-foreground"
-                  data-ocid="add_account.category_select"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  {ACCOUNT_CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                categories={accountCategories}
+                onAddCategory={addAccountCategory}
+                triggerId="category"
+                triggerClassName="bg-secondary border-border text-foreground w-full"
+                ocidTrigger="add_account.category_select"
+                ocidPrefix="account_category"
+              />
             </div>
 
             <div className="space-y-2">

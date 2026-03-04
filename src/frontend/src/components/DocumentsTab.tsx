@@ -32,11 +32,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Calendar,
   CloudUpload,
+  Download,
   Edit2,
   File,
   FileText,
   HardDrive,
   Loader2,
+  Plus,
   Search,
   Star,
   Trash2,
@@ -44,10 +46,11 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ExternalBlob } from "../backend";
 import type { Document } from "../backend.d.ts";
+import { loadConfig } from "../config";
 import { useActor } from "../hooks/useActor";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
@@ -65,17 +68,6 @@ import { useEnrichment } from "../utils/localEnrichment";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const DOC_CATEGORIES = [
-  "ID",
-  "Contract",
-  "Receipt",
-  "Medical",
-  "Financial",
-  "Other",
-] as const;
-
-type DocCategory = (typeof DOC_CATEGORIES)[number] | "All";
-
 const DOC_CATEGORY_COLORS: Record<string, string> = {
   ID: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   Contract: "bg-purple-500/20 text-purple-400 border-purple-500/30",
@@ -85,6 +77,10 @@ const DOC_CATEGORY_COLORS: Record<string, string> = {
   Other: "bg-secondary text-muted-foreground border-border",
 };
 
+function getCategoryColor(cat: string): string {
+  return DOC_CATEGORY_COLORS[cat] ?? DOC_CATEGORY_COLORS.Other;
+}
+
 function getDaysUntilExpiry(expiryDate: string): number {
   const expiry = new Date(expiryDate);
   const today = new Date();
@@ -92,6 +88,163 @@ function getDaysUntilExpiry(expiryDate: string): number {
   expiry.setHours(0, 0, 0, 0);
   return Math.ceil(
     (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+  );
+}
+
+async function buildBlobUrl(blobId: string): Promise<string> {
+  const config = await loadConfig();
+  const gatewayUrl = config.storage_gateway_url;
+  const canisterId = config.backend_canister_id;
+  const projectId = config.project_id;
+  return `${gatewayUrl}/v1/blob/?blob_hash=${encodeURIComponent(blobId)}&owner_id=${encodeURIComponent(canisterId)}&project_id=${encodeURIComponent(projectId)}`;
+}
+
+// ─── New Category inline input ───────────────────────────────────────────────
+
+interface NewCategoryInputProps {
+  onSave: (name: string) => void;
+  onCancel: () => void;
+  ocidPrefix: string;
+}
+
+function NewCategoryInput({
+  onSave,
+  onCancel,
+  ocidPrefix,
+}: NewCategoryInputProps) {
+  const [value, setValue] = useState("");
+
+  const handleSave = () => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    onSave(trimmed);
+    setValue("");
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.15 }}
+      className="overflow-hidden"
+    >
+      <div className="mt-2 flex gap-2 items-center p-2 rounded-lg border border-teal/30 bg-teal/5">
+        <Input
+          autoFocus
+          placeholder="Category name..."
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSave();
+            }
+            if (e.key === "Escape") onCancel();
+          }}
+          className="h-7 text-xs bg-secondary border-border text-foreground flex-1"
+          data-ocid={`${ocidPrefix}.input`}
+        />
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 px-2 text-xs bg-teal hover:bg-teal/90 text-background font-semibold"
+          onClick={handleSave}
+          disabled={!value.trim()}
+          data-ocid={`${ocidPrefix}.save_button`}
+        >
+          Add
+        </Button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Category Select with "+ New" option ─────────────────────────────────────
+
+interface CategorySelectProps {
+  value: string;
+  onValueChange: (value: string) => void;
+  categories: string[];
+  onAddCategory: (name: string) => void;
+  triggerId?: string;
+  triggerClassName?: string;
+  ocidTrigger?: string;
+  ocidPrefix: string;
+  placeholder?: string;
+  includeAll?: boolean;
+}
+
+function CategorySelect({
+  value,
+  onValueChange,
+  categories,
+  onAddCategory,
+  triggerId,
+  triggerClassName,
+  ocidTrigger,
+  ocidPrefix,
+  placeholder,
+  includeAll = false,
+}: CategorySelectProps) {
+  const [showNewInput, setShowNewInput] = useState(false);
+
+  const handleSelectChange = (v: string) => {
+    if (v === "__new__") {
+      setShowNewInput(true);
+      return;
+    }
+    onValueChange(v);
+  };
+
+  const handleSaveNew = (name: string) => {
+    onAddCategory(name);
+    onValueChange(name);
+    setShowNewInput(false);
+  };
+
+  return (
+    <div className="space-y-0">
+      <Select value={value} onValueChange={handleSelectChange}>
+        <SelectTrigger
+          id={triggerId}
+          className={triggerClassName}
+          data-ocid={ocidTrigger}
+        >
+          <SelectValue placeholder={placeholder ?? "Select category"} />
+        </SelectTrigger>
+        <SelectContent className="bg-popover border-border">
+          {includeAll && <SelectItem value="All">All Categories</SelectItem>}
+          {categories.map((cat) => (
+            <SelectItem key={cat} value={cat}>
+              {cat}
+            </SelectItem>
+          ))}
+          <SelectItem value="__new__">
+            <span className="flex items-center gap-1.5 text-teal">
+              <Plus className="w-3 h-3" />
+              New Category
+            </span>
+          </SelectItem>
+        </SelectContent>
+      </Select>
+      <AnimatePresence>
+        {showNewInput && (
+          <NewCategoryInput
+            onSave={handleSaveNew}
+            onCancel={() => setShowNewInput(false)}
+            ocidPrefix={ocidPrefix}
+          />
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -146,11 +299,205 @@ function ExpiryBadge({ expiryDate }: ExpiryBadgeProps) {
   );
 }
 
+// ─── Document Viewer Dialog ──────────────────────────────────────────────────
+
+interface DocumentViewerProps {
+  doc: Document | null;
+  displayDescription: string;
+  onClose: () => void;
+}
+
+function DocumentViewer({
+  doc,
+  displayDescription,
+  onClose,
+}: DocumentViewerProps) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [isLoadingUrl, setIsLoadingUrl] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
+
+  // Load URL whenever doc changes
+  useEffect(() => {
+    if (!doc) {
+      setBlobUrl(null);
+      setUrlError(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingUrl(true);
+    setBlobUrl(null);
+    setUrlError(null);
+    buildBlobUrl(doc.blobId)
+      .then((url) => {
+        if (!cancelled) setBlobUrl(url);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setUrlError("Failed to generate document URL");
+          console.error(err);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingUrl(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc]);
+
+  const handleDownload = async () => {
+    if (!doc) return;
+    try {
+      const url = blobUrl ?? (await buildBlobUrl(doc.blobId));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = displayDescription;
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      toast.error("Failed to download document");
+    }
+  };
+
+  const fileType = doc?.fileType ?? "";
+  const isImage = fileType.startsWith("image/");
+  const isPdf = fileType === "application/pdf";
+  const isVideo = fileType.startsWith("video/");
+  const isAudio = fileType.startsWith("audio/");
+  const canPreview = isImage || isPdf || isVideo || isAudio;
+
+  return (
+    <Dialog open={!!doc} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="bg-card border-border sm:max-w-3xl max-h-[90vh] flex flex-col"
+        data-ocid="documents.view_dialog"
+      >
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle className="font-display text-foreground flex items-center gap-2 truncate pr-6">
+            <FileText className="w-5 h-5 text-teal flex-shrink-0" />
+            <span className="truncate">{displayDescription}</span>
+          </DialogTitle>
+          {doc && (
+            <DialogDescription className="text-muted-foreground">
+              {doc.fileType} &middot; {formatFileSize(doc.fileSize)}
+            </DialogDescription>
+          )}
+        </DialogHeader>
+
+        {/* Preview area */}
+        <div className="flex-1 min-h-0 overflow-auto rounded-lg bg-secondary/50 border border-border flex items-center justify-center">
+          {isLoadingUrl && (
+            <div className="flex flex-col items-center gap-3 p-8 text-muted-foreground">
+              <Loader2 className="w-8 h-8 animate-spin text-teal" />
+              <p className="text-sm">Loading document...</p>
+            </div>
+          )}
+
+          {urlError && !isLoadingUrl && (
+            <div className="flex flex-col items-center gap-3 p-8 text-destructive">
+              <FileText className="w-8 h-8" />
+              <p className="text-sm font-medium">{urlError}</p>
+            </div>
+          )}
+
+          {blobUrl && !isLoadingUrl && !urlError && (
+            <>
+              {isImage && (
+                <img
+                  src={blobUrl}
+                  alt={displayDescription}
+                  className="max-w-full max-h-[60vh] object-contain rounded-lg"
+                />
+              )}
+              {isPdf && (
+                <iframe
+                  src={blobUrl}
+                  title={displayDescription}
+                  className="w-full"
+                  style={{ height: "60vh" }}
+                />
+              )}
+              {isVideo && (
+                <video
+                  src={blobUrl}
+                  controls
+                  className="max-w-full max-h-[60vh] rounded-lg"
+                >
+                  <track kind="captions" />
+                  Your browser does not support video playback.
+                </video>
+              )}
+              {isAudio && (
+                <div className="p-8 w-full">
+                  {/* biome-ignore lint/a11y/useMediaCaption: audio from user uploads may not have captions */}
+                  <audio src={blobUrl} controls className="w-full" />
+                </div>
+              )}
+              {!canPreview && (
+                <div className="flex flex-col items-center gap-4 p-8 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-teal/10 border border-teal/20 flex items-center justify-center">
+                    <File className="w-8 h-8 text-teal" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">
+                      Preview not available
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      This file type ({fileType || "unknown"}) cannot be
+                      previewed directly.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={handleDownload}
+                    className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2"
+                    data-ocid="documents.view_dialog.download_button"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download File
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <DialogFooter className="flex-shrink-0 mt-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            className="border-border"
+            data-ocid="documents.view_dialog.close_button"
+          >
+            Close
+          </Button>
+          {canPreview && (
+            <Button
+              type="button"
+              onClick={handleDownload}
+              className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2"
+              data-ocid="documents.view_dialog.download_button"
+            >
+              <Download className="w-4 h-4" />
+              Download
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Document Row ─────────────────────────────────────────────────────────────
+
 interface DocumentRowProps {
   doc: Document;
   index: number;
   onDelete: (doc: Document) => void;
   onEdit: (doc: Document) => void;
+  onView: (doc: Document) => void;
   category?: string;
   isFavorite: boolean;
   expiryDate?: string;
@@ -163,6 +510,7 @@ function DocumentRow({
   index,
   onDelete,
   onEdit,
+  onView,
   category,
   isFavorite,
   expiryDate,
@@ -171,6 +519,22 @@ function DocumentRow({
 }: DocumentRowProps) {
   const typeLabel = getFileTypeLabel(doc.fileType);
   const typeColor = getFileTypeColor(doc.fileType);
+
+  const handleDownload = async () => {
+    try {
+      const url = await buildBlobUrl(doc.blobId);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = displayDescription;
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast.success("Download started");
+    } catch {
+      toast.error("Failed to download document");
+    }
+  };
 
   return (
     <motion.div
@@ -192,13 +556,18 @@ function DocumentRow({
         {/* Document info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="font-semibold text-foreground text-sm truncate">
+            <button
+              type="button"
+              onClick={() => onView(doc)}
+              className="font-semibold text-foreground text-sm truncate hover:text-teal transition-colors text-left"
+              title="Click to view document"
+            >
               {displayDescription}
-            </p>
+            </button>
             {category && category !== "Other" && (
               <Badge
                 variant="outline"
-                className={`text-xs px-1.5 py-0 h-4 ${DOC_CATEGORY_COLORS[category] ?? DOC_CATEGORY_COLORS.Other}`}
+                className={`text-xs px-1.5 py-0 h-4 ${getCategoryColor(category)}`}
               >
                 {category}
               </Badge>
@@ -238,6 +607,17 @@ function DocumentRow({
               className={`w-3.5 h-3.5 ${isFavorite ? "fill-yellow-400" : ""}`}
             />
           </button>
+          {/* Download button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-teal/10 hover:text-teal"
+            onClick={handleDownload}
+            data-ocid={`documents.download_button.${index}`}
+            title="Download document"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </Button>
           {/* Edit button */}
           <Button
             variant="ghost"
@@ -275,6 +655,7 @@ export default function DocumentsTab() {
     enrichment,
     updateDocument: updateEnrichment,
     removeDocument,
+    addDocCategory,
   } = useEnrichment(principalText);
 
   const { data: documents, isLoading, isError } = useGetAllDocuments();
@@ -283,10 +664,12 @@ export default function DocumentsTab() {
   const { actor } = useActor();
 
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<DocCategory>("All");
+  const [categoryFilter, setCategoryFilter] = useState("All");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null);
   const [editTarget, setEditTarget] = useState<Document | null>(null);
+  const [viewTarget, setViewTarget] = useState<Document | null>(null);
+  const [viewDescription, setViewDescription] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
   const [uploadCategory, setUploadCategory] = useState("Other");
@@ -302,6 +685,8 @@ export default function DocumentsTab() {
   const [editCategory, setEditCategory] = useState("Other");
   const [editExpiryDate, setEditExpiryDate] = useState("");
   const [editFavorite, setEditFavorite] = useState(false);
+
+  const docCategories = enrichment.customDocCategories;
 
   const allDocuments = documents ?? [];
 
@@ -340,6 +725,12 @@ export default function DocumentsTab() {
     setEditCategory(e.category ?? "Other");
     setEditExpiryDate(e.expiryDate ?? "");
     setEditFavorite(e.favorite ?? false);
+  };
+
+  const handleOpenView = (doc: Document) => {
+    const e = enrichment.documents[doc.id] ?? {};
+    setViewDescription(e.overrideDescription ?? doc.description);
+    setViewTarget(doc);
   };
 
   const handleSaveEdit = () => {
@@ -449,25 +840,19 @@ export default function DocumentsTab() {
             data-ocid="documents.search_input"
           />
         </div>
-        <Select
-          value={categoryFilter}
-          onValueChange={(v) => setCategoryFilter(v as DocCategory)}
-        >
-          <SelectTrigger
-            className="w-[150px] bg-secondary border-border text-foreground"
-            data-ocid="documents.category_select"
-          >
-            <SelectValue placeholder="All Categories" />
-          </SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="All">All Categories</SelectItem>
-            {DOC_CATEGORIES.map((cat) => (
-              <SelectItem key={cat} value={cat}>
-                {cat}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="w-[180px]">
+          <CategorySelect
+            value={categoryFilter}
+            onValueChange={setCategoryFilter}
+            categories={docCategories}
+            onAddCategory={addDocCategory}
+            triggerClassName="w-full bg-secondary border-border text-foreground"
+            ocidTrigger="documents.category_select"
+            ocidPrefix="doc_category"
+            includeAll
+            placeholder="All Categories"
+          />
+        </div>
         <Button
           className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2 flex-shrink-0"
           onClick={handleOpenUpload}
@@ -570,6 +955,7 @@ export default function DocumentsTab() {
                   index={i + 1}
                   onDelete={setDeleteTarget}
                   onEdit={handleOpenEdit}
+                  onView={handleOpenView}
                   category={e.category}
                   isFavorite={!!e.favorite}
                   expiryDate={e.expiryDate}
@@ -583,6 +969,13 @@ export default function DocumentsTab() {
           </div>
         </AnimatePresence>
       )}
+
+      {/* Document Viewer */}
+      <DocumentViewer
+        doc={viewTarget}
+        displayDescription={viewDescription}
+        onClose={() => setViewTarget(null)}
+      />
 
       {/* Upload Modal */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
@@ -688,22 +1081,16 @@ export default function DocumentsTab() {
               <Label htmlFor="doc-category" className="text-foreground text-sm">
                 Category
               </Label>
-              <Select value={uploadCategory} onValueChange={setUploadCategory}>
-                <SelectTrigger
-                  id="doc-category"
-                  className="bg-secondary border-border text-foreground"
-                  data-ocid="upload_doc.category_select"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  {DOC_CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <CategorySelect
+                value={uploadCategory}
+                onValueChange={setUploadCategory}
+                categories={docCategories}
+                onAddCategory={addDocCategory}
+                triggerId="doc-category"
+                triggerClassName="bg-secondary border-border text-foreground w-full"
+                ocidTrigger="upload_doc.category_select"
+                ocidPrefix="doc_category"
+              />
             </div>
 
             {/* Expiry date */}
@@ -840,21 +1227,15 @@ export default function DocumentsTab() {
 
             <div className="space-y-2">
               <Label className="text-foreground text-sm">Category</Label>
-              <Select value={editCategory} onValueChange={setEditCategory}>
-                <SelectTrigger
-                  className="bg-secondary border-border text-foreground"
-                  data-ocid="edit_doc.select"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  {DOC_CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <CategorySelect
+                value={editCategory}
+                onValueChange={setEditCategory}
+                categories={docCategories}
+                onAddCategory={addDocCategory}
+                triggerClassName="bg-secondary border-border text-foreground w-full"
+                ocidTrigger="edit_doc.select"
+                ocidPrefix="doc_category"
+              />
             </div>
 
             <div className="space-y-2">
