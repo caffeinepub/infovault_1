@@ -22,12 +22,15 @@ import {
   ChevronDown,
   Loader2,
   LogOut,
+  Moon,
   Settings,
   Shield,
+  Sun,
   User,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useTheme } from "../contexts/ThemeContext";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
   useGetCallerUserProfile,
@@ -40,6 +43,7 @@ export default function Header() {
   const queryClient = useQueryClient();
   const { data: profile } = useGetCallerUserProfile();
   const saveProfile = useSaveCallerUserProfile();
+  const { theme, toggleTheme } = useTheme();
 
   const [profileOpen, setProfileOpen] = useState(false);
   const [editName, setEditName] = useState("");
@@ -77,7 +81,7 @@ export default function Header() {
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-teal/10 border border-teal/20 flex items-center justify-center">
               <img
-                src="/assets/generated/infovault-logo-transparent.dim_64x64.png"
+                src="/assets/uploads/original-358c449a1d214658481ee0571a00d34c-2-1.gif"
                 alt="InfoVault"
                 className="w-5 h-5 object-contain"
               />
@@ -93,55 +97,78 @@ export default function Header() {
             </div>
           </div>
 
-          {/* User menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                className="flex items-center gap-2.5 h-9 px-3 text-sm hover:bg-accent"
-                data-ocid="header.profile_button"
-              >
-                <Avatar className="h-7 w-7">
-                  <AvatarFallback className="bg-teal/20 text-teal text-xs font-bold font-mono">
-                    {initials}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="hidden sm:block text-foreground font-medium max-w-[120px] truncate">
-                  {displayName}
-                </span>
-                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-48 bg-popover border-border"
-              data-ocid="header.dropdown_menu"
+          {/* Right side controls */}
+          <div className="flex items-center gap-2">
+            {/* Theme toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-accent"
+              title={
+                theme === "dark"
+                  ? "Switch to light mode"
+                  : "Switch to dark mode"
+              }
+              data-ocid="header.theme_toggle"
             >
-              <div className="px-3 py-2">
-                <p className="text-xs text-muted-foreground">Signed in as</p>
-                <p className="text-sm font-medium text-foreground truncate">
-                  {displayName}
-                </p>
-              </div>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={handleOpenProfile}
-                className="cursor-pointer"
+              {theme === "dark" ? (
+                <Sun className="w-4 h-4" />
+              ) : (
+                <Moon className="w-4 h-4" />
+              )}
+            </Button>
+
+            {/* User menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="flex items-center gap-2.5 h-9 px-3 text-sm hover:bg-accent"
+                  data-ocid="header.profile_button"
+                >
+                  <Avatar className="h-7 w-7">
+                    <AvatarFallback className="bg-teal/20 text-teal text-xs font-bold font-mono">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="hidden sm:block text-foreground font-medium max-w-[120px] truncate">
+                    {displayName}
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-48 bg-popover border-border"
+                data-ocid="header.dropdown_menu"
               >
-                <Settings className="mr-2 h-4 w-4" />
-                Edit Profile
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={handleLogout}
-                className="cursor-pointer text-destructive focus:text-destructive"
-                data-ocid="header.logout_button"
-              >
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign Out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <div className="px-3 py-2">
+                  <p className="text-xs text-muted-foreground">Signed in as</p>
+                  <p className="text-sm font-medium text-foreground truncate">
+                    {displayName}
+                  </p>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleOpenProfile}
+                  className="cursor-pointer"
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  Edit Profile
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleLogout}
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                  data-ocid="header.logout_button"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </header>
 

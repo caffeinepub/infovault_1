@@ -21,14 +21,24 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Calendar,
   CloudUpload,
+  Edit2,
   File,
   FileText,
   HardDrive,
   Loader2,
+  Search,
+  Star,
   Trash2,
   Upload,
   X,
@@ -39,6 +49,7 @@ import { toast } from "sonner";
 import { ExternalBlob } from "../backend";
 import type { Document } from "../backend.d.ts";
 import { useActor } from "../hooks/useActor";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
   useCreateDocument,
   useDeleteDocument,
@@ -50,6 +61,41 @@ import {
   getFileTypeColor,
   getFileTypeLabel,
 } from "../utils/format";
+import { useEnrichment } from "../utils/localEnrichment";
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const DOC_CATEGORIES = [
+  "ID",
+  "Contract",
+  "Receipt",
+  "Medical",
+  "Financial",
+  "Other",
+] as const;
+
+type DocCategory = (typeof DOC_CATEGORIES)[number] | "All";
+
+const DOC_CATEGORY_COLORS: Record<string, string> = {
+  ID: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  Contract: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  Receipt: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  Medical: "bg-rose-500/20 text-rose-400 border-rose-500/30",
+  Financial: "bg-teal/20 text-teal border-teal/30",
+  Other: "bg-secondary text-muted-foreground border-border",
+};
+
+function getDaysUntilExpiry(expiryDate: string): number {
+  const expiry = new Date(expiryDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  expiry.setHours(0, 0, 0, 0);
+  return Math.ceil(
+    (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+  );
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
 
 function DocumentSkeleton() {
   return (
@@ -67,13 +113,62 @@ function DocumentSkeleton() {
   );
 }
 
+interface ExpiryBadgeProps {
+  expiryDate: string;
+}
+
+function ExpiryBadge({ expiryDate }: ExpiryBadgeProps) {
+  const days = getDaysUntilExpiry(expiryDate);
+
+  if (days <= 0) {
+    return (
+      <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">
+        Expired
+      </Badge>
+    );
+  }
+  if (days <= 30) {
+    return (
+      <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-xs">
+        Expires in {days}d
+      </Badge>
+    );
+  }
+  return (
+    <span className="text-xs text-teal">
+      Expires{" "}
+      {new Date(expiryDate).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}
+    </span>
+  );
+}
+
 interface DocumentRowProps {
   doc: Document;
   index: number;
   onDelete: (doc: Document) => void;
+  onEdit: (doc: Document) => void;
+  category?: string;
+  isFavorite: boolean;
+  expiryDate?: string;
+  displayDescription: string;
+  onToggleFavorite: () => void;
 }
 
-function DocumentRow({ doc, index, onDelete }: DocumentRowProps) {
+function DocumentRow({
+  doc,
+  index,
+  onDelete,
+  onEdit,
+  category,
+  isFavorite,
+  expiryDate,
+  displayDescription,
+  onToggleFavorite,
+}: DocumentRowProps) {
   const typeLabel = getFileTypeLabel(doc.fileType);
   const typeColor = getFileTypeColor(doc.fileType);
 
@@ -96,9 +191,19 @@ function DocumentRow({ doc, index, onDelete }: DocumentRowProps) {
 
         {/* Document info */}
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-foreground text-sm truncate">
-            {doc.description}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-foreground text-sm truncate">
+              {displayDescription}
+            </p>
+            {category && category !== "Other" && (
+              <Badge
+                variant="outline"
+                className={`text-xs px-1.5 py-0 h-4 ${DOC_CATEGORY_COLORS[category] ?? DOC_CATEGORY_COLORS.Other}`}
+              >
+                {category}
+              </Badge>
+            )}
+          </div>
           <div className="flex items-center flex-wrap gap-3 mt-1">
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <File className="w-3 h-3" />
@@ -112,45 +217,141 @@ function DocumentRow({ doc, index, onDelete }: DocumentRowProps) {
               <Calendar className="w-3 h-3" />
               {formatDate(doc.createdAt)}
             </span>
+            {expiryDate && <ExpiryBadge expiryDate={expiryDate} />}
           </div>
         </div>
 
-        {/* Delete action */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive flex-shrink-0"
-          onClick={() => onDelete(doc)}
-          data-ocid={`documents.delete_button.${index}`}
-          title="Delete document"
-        >
-          <Trash2 className="w-4 h-4" />
-        </Button>
+        {/* Actions */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Favorite star */}
+          <button
+            type="button"
+            onClick={onToggleFavorite}
+            className={`p-1.5 rounded hover:bg-accent transition-colors ${
+              isFavorite
+                ? "text-yellow-400"
+                : "text-muted-foreground opacity-0 group-hover:opacity-100"
+            }`}
+            title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          >
+            <Star
+              className={`w-3.5 h-3.5 ${isFavorite ? "fill-yellow-400" : ""}`}
+            />
+          </button>
+          {/* Edit button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-accent"
+            onClick={() => onEdit(doc)}
+            data-ocid={`documents.edit_button.${index}`}
+            title="Edit document"
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+          </Button>
+          {/* Delete action */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive flex-shrink-0"
+            onClick={() => onDelete(doc)}
+            data-ocid={`documents.delete_button.${index}`}
+            title="Delete document"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
     </motion.div>
   );
 }
 
+// ─── Main Component ──────────────────────────────────────────────────────────
+
 export default function DocumentsTab() {
+  const { identity } = useInternetIdentity();
+  const principalText = identity?.getPrincipal().toText() ?? "";
+  const {
+    enrichment,
+    updateDocument: updateEnrichment,
+    removeDocument,
+  } = useEnrichment(principalText);
+
   const { data: documents, isLoading, isError } = useGetAllDocuments();
   const createDocument = useCreateDocument();
   const deleteDocument = useDeleteDocument();
   const { actor } = useActor();
 
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<DocCategory>("All");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null);
+  const [editTarget, setEditTarget] = useState<Document | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
+  const [uploadCategory, setUploadCategory] = useState("Other");
+  const [uploadExpiryDate, setUploadExpiryDate] = useState("");
+  const [uploadFavorite, setUploadFavorite] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Edit modal state
+  const [editDescription, setEditDescription] = useState("");
+  const [editCategory, setEditCategory] = useState("Other");
+  const [editExpiryDate, setEditExpiryDate] = useState("");
+  const [editFavorite, setEditFavorite] = useState(false);
+
+  const allDocuments = documents ?? [];
+
+  // Sort: favorites first
+  const sortedDocuments = [...allDocuments].sort((a, b) => {
+    const aFav = enrichment.documents[a.id]?.favorite ? 1 : 0;
+    const bFav = enrichment.documents[b.id]?.favorite ? 1 : 0;
+    return bFav - aFav;
+  });
+
+  const filtered = sortedDocuments.filter((doc) => {
+    const e = enrichment.documents[doc.id] ?? {};
+    const displayDesc = e.overrideDescription ?? doc.description;
+    const matchesSearch = displayDesc
+      .toLowerCase()
+      .includes(search.toLowerCase());
+    const matchesCategory =
+      categoryFilter === "All" || (e.category ?? "Other") === categoryFilter;
+    return matchesSearch && matchesCategory;
+  });
+
   const handleOpenUpload = () => {
     setSelectedFile(null);
     setDescription("");
+    setUploadCategory("Other");
+    setUploadExpiryDate("");
+    setUploadFavorite(false);
     setUploadProgress(0);
     setUploadOpen(true);
+  };
+
+  const handleOpenEdit = (doc: Document) => {
+    const e = enrichment.documents[doc.id] ?? {};
+    setEditTarget(doc);
+    setEditDescription(e.overrideDescription ?? doc.description);
+    setEditCategory(e.category ?? "Other");
+    setEditExpiryDate(e.expiryDate ?? "");
+    setEditFavorite(e.favorite ?? false);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editTarget) return;
+    updateEnrichment(editTarget.id, {
+      overrideDescription: editDescription.trim() || undefined,
+      category: editCategory,
+      expiryDate: editExpiryDate || undefined,
+      favorite: editFavorite,
+    });
+    toast.success("Document updated");
+    setEditTarget(null);
   };
 
   const handleFileDrop = useCallback((e: React.DragEvent) => {
@@ -182,29 +383,33 @@ export default function DocumentsTab() {
     try {
       const bytes = new Uint8Array(await selectedFile.arrayBuffer());
 
-      // Use ExternalBlob upload via the actor's internal upload function
       const externalBlob = ExternalBlob.fromBytes(bytes).withUploadProgress(
         (pct) => setUploadProgress(pct),
       );
 
-      // Call the actor's internal _uploadFile which is accessible via type cast
       const hashBytes = await (
         actor as unknown as {
           _uploadFile: (blob: ExternalBlob) => Promise<Uint8Array>;
         }
       )._uploadFile(externalBlob);
 
-      // Convert hash bytes to sha256: prefixed hex string
       const hashHex = Array.from(hashBytes)
         .map((b: number) => b.toString(16).padStart(2, "0"))
         .join("");
       const blobId = `sha256:${hashHex}`;
 
-      await createDocument.mutateAsync({
+      const docId = await createDocument.mutateAsync({
         description: description.trim(),
         blobId,
         fileType: selectedFile.type || "application/octet-stream",
         fileSize: BigInt(selectedFile.size),
+      });
+
+      // Save enrichment
+      updateEnrichment(docId, {
+        category: uploadCategory,
+        favorite: uploadFavorite,
+        expiryDate: uploadExpiryDate || undefined,
       });
 
       toast.success(`"${description}" uploaded successfully`);
@@ -222,6 +427,7 @@ export default function DocumentsTab() {
     if (!deleteTarget) return;
     try {
       await deleteDocument.mutateAsync(deleteTarget.id);
+      removeDocument(deleteTarget.id);
       toast.success(`Deleted "${deleteTarget.description}"`);
       setDeleteTarget(null);
     } catch {
@@ -232,20 +438,38 @@ export default function DocumentsTab() {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
-        <div>
-          {!isLoading && documents && documents.length > 0 && (
-            <Badge
-              variant="secondary"
-              className="text-xs bg-secondary text-muted-foreground"
-            >
-              {documents.length} document{documents.length !== 1 ? "s" : ""}{" "}
-              stored
-            </Badge>
-          )}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search documents..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 bg-secondary border-border text-foreground placeholder:text-muted-foreground"
+            data-ocid="documents.search_input"
+          />
         </div>
+        <Select
+          value={categoryFilter}
+          onValueChange={(v) => setCategoryFilter(v as DocCategory)}
+        >
+          <SelectTrigger
+            className="w-[150px] bg-secondary border-border text-foreground"
+            data-ocid="documents.category_select"
+          >
+            <SelectValue placeholder="All Categories" />
+          </SelectTrigger>
+          <SelectContent className="bg-popover border-border">
+            <SelectItem value="All">All Categories</SelectItem>
+            {DOC_CATEGORIES.map((cat) => (
+              <SelectItem key={cat} value={cat}>
+                {cat}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
-          className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2"
+          className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2 flex-shrink-0"
           onClick={handleOpenUpload}
           data-ocid="documents.upload_button"
         >
@@ -254,6 +478,27 @@ export default function DocumentsTab() {
           <span className="sm:hidden">Upload</span>
         </Button>
       </div>
+
+      {/* Stats */}
+      {!isLoading && allDocuments.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <Badge
+            variant="secondary"
+            className="text-xs bg-secondary text-muted-foreground"
+          >
+            {allDocuments.length} document{allDocuments.length !== 1 ? "s" : ""}{" "}
+            stored
+          </Badge>
+          {(search || categoryFilter !== "All") && (
+            <Badge
+              variant="outline"
+              className="text-xs border-teal/30 text-teal"
+            >
+              {filtered.length} result{filtered.length !== 1 ? "s" : ""}
+            </Badge>
+          )}
+        </div>
+      )}
 
       {/* Loading */}
       {isLoading && (
@@ -278,7 +523,7 @@ export default function DocumentsTab() {
       )}
 
       {/* Empty state */}
-      {!isLoading && !isError && (!documents || documents.length === 0) && (
+      {!isLoading && !isError && filtered.length === 0 && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -289,34 +534,52 @@ export default function DocumentsTab() {
             <FileText className="w-8 h-8 text-teal" />
           </div>
           <h3 className="font-display font-semibold text-foreground mb-2">
-            No documents yet
+            {search || categoryFilter !== "All"
+              ? "No matching documents"
+              : "No documents yet"}
           </h3>
           <p className="text-muted-foreground text-sm mb-5">
-            Upload important documents to keep them securely stored in your
-            vault
+            {search
+              ? `No documents match "${search}"`
+              : categoryFilter !== "All"
+                ? `No documents in the "${categoryFilter}" category`
+                : "Upload important documents to keep them securely stored in your vault"}
           </p>
-          <Button
-            className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2"
-            onClick={handleOpenUpload}
-          >
-            <Upload className="h-4 w-4" />
-            Upload Your First Document
-          </Button>
+          {!search && categoryFilter === "All" && (
+            <Button
+              className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2"
+              onClick={handleOpenUpload}
+            >
+              <Upload className="h-4 w-4" />
+              Upload Your First Document
+            </Button>
+          )}
         </motion.div>
       )}
 
       {/* Document list */}
-      {!isLoading && !isError && documents && documents.length > 0 && (
+      {!isLoading && !isError && filtered.length > 0 && (
         <AnimatePresence mode="popLayout">
           <div className="space-y-2">
-            {documents.map((doc, i) => (
-              <DocumentRow
-                key={doc.id}
-                doc={doc}
-                index={i + 1}
-                onDelete={setDeleteTarget}
-              />
-            ))}
+            {filtered.map((doc, i) => {
+              const e = enrichment.documents[doc.id] ?? {};
+              return (
+                <DocumentRow
+                  key={doc.id}
+                  doc={doc}
+                  index={i + 1}
+                  onDelete={setDeleteTarget}
+                  onEdit={handleOpenEdit}
+                  category={e.category}
+                  isFavorite={!!e.favorite}
+                  expiryDate={e.expiryDate}
+                  displayDescription={e.overrideDescription ?? doc.description}
+                  onToggleFavorite={() =>
+                    updateEnrichment(doc.id, { favorite: !e.favorite })
+                  }
+                />
+              );
+            })}
           </div>
         </AnimatePresence>
       )}
@@ -420,6 +683,68 @@ export default function DocumentsTab() {
               />
             </div>
 
+            {/* Category */}
+            <div className="space-y-2">
+              <Label htmlFor="doc-category" className="text-foreground text-sm">
+                Category
+              </Label>
+              <Select value={uploadCategory} onValueChange={setUploadCategory}>
+                <SelectTrigger
+                  id="doc-category"
+                  className="bg-secondary border-border text-foreground"
+                  data-ocid="upload_doc.category_select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {DOC_CATEGORIES.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Expiry date */}
+            <div className="space-y-2">
+              <Label htmlFor="doc-expiry" className="text-foreground text-sm">
+                Expiry Date{" "}
+                <span className="text-muted-foreground text-xs">
+                  (optional)
+                </span>
+              </Label>
+              <Input
+                id="doc-expiry"
+                type="date"
+                value={uploadExpiryDate}
+                onChange={(e) => setUploadExpiryDate(e.target.value)}
+                className="bg-secondary border-border text-foreground"
+                data-ocid="upload_doc.expiry_input"
+              />
+            </div>
+
+            {/* Favorite toggle */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setUploadFavorite((v) => !v)}
+                className={`p-1.5 rounded hover:bg-accent transition-colors ${
+                  uploadFavorite ? "text-yellow-400" : "text-muted-foreground"
+                }`}
+                title={
+                  uploadFavorite ? "Remove from favorites" : "Mark as favorite"
+                }
+              >
+                <Star
+                  className={`w-4 h-4 ${uploadFavorite ? "fill-yellow-400" : ""}`}
+                />
+              </button>
+              <span className="text-sm text-muted-foreground">
+                {uploadFavorite ? "Marked as favorite" : "Add to favorites"}
+              </span>
+            </div>
+
             {/* Progress */}
             {isUploading && (
               <div className="space-y-2">
@@ -465,6 +790,109 @@ export default function DocumentsTab() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Modal */}
+      <Dialog
+        open={!!editTarget}
+        onOpenChange={(open) => !open && setEditTarget(null)}
+      >
+        <DialogContent
+          className="bg-card border-border sm:max-w-md"
+          data-ocid="edit_doc.dialog"
+        >
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="font-display text-foreground flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-teal" />
+                Edit Document
+              </DialogTitle>
+              <button
+                type="button"
+                onClick={() => setEditFavorite((v) => !v)}
+                className={`p-1.5 rounded hover:bg-accent transition-colors mr-6 ${
+                  editFavorite ? "text-yellow-400" : "text-muted-foreground"
+                }`}
+                title="Toggle favorite"
+              >
+                <Star
+                  className={`w-5 h-5 ${editFavorite ? "fill-yellow-400" : ""}`}
+                />
+              </button>
+            </div>
+            <DialogDescription className="text-muted-foreground">
+              Update document metadata (stored locally)
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-foreground text-sm">Description</Label>
+              <Input
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                placeholder="Document description"
+                className="bg-secondary border-border text-foreground"
+                data-ocid="edit_doc.input"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-foreground text-sm">Category</Label>
+              <Select value={editCategory} onValueChange={setEditCategory}>
+                <SelectTrigger
+                  className="bg-secondary border-border text-foreground"
+                  data-ocid="edit_doc.select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {DOC_CATEGORIES.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-foreground text-sm">
+                Expiry Date{" "}
+                <span className="text-muted-foreground text-xs">
+                  (optional)
+                </span>
+              </Label>
+              <Input
+                type="date"
+                value={editExpiryDate}
+                onChange={(e) => setEditExpiryDate(e.target.value)}
+                className="bg-secondary border-border text-foreground"
+                data-ocid="edit_doc.expiry_input"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditTarget(null)}
+              className="border-border"
+              data-ocid="edit_doc.cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveEdit}
+              className="bg-teal hover:bg-teal/90 text-background font-semibold"
+              data-ocid="edit_doc.save_button"
+            >
+              Save Changes
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -1,10 +1,15 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import Dashboard from "./components/Dashboard";
 import LoginPage from "./components/LoginPage";
 import ProfileSetupModal from "./components/ProfileSetupModal";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { useGetCallerUserProfile } from "./hooks/useQueries";
+
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 function AppLoader() {
   return (
@@ -32,35 +37,48 @@ function AppLoader() {
   );
 }
 
-export default function App() {
-  const { identity, isInitializing } = useInternetIdentity();
-  const queryClient = useQueryClient();
-  const isAuthenticated = !!identity;
+function AuthenticatedApp() {
+  const { clear } = useInternetIdentity();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    const resetTimer = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(async () => {
+        await clear();
+        toast("Session locked due to inactivity", {
+          description: "Please sign in again to continue.",
+          icon: "🔒",
+        });
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const events = ["mousemove", "keydown", "click", "touchstart"] as const;
+    for (const event of events) {
+      window.addEventListener(event, resetTimer, { passive: true });
+    }
+    resetTimer(); // start initial timer
+
+    return () => {
+      for (const event of events) {
+        window.removeEventListener(event, resetTimer);
+      }
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [clear]);
+
+  const queryClient = useQueryClient();
   const {
     data: profile,
     isLoading: profileLoading,
     isFetched: profileFetched,
   } = useGetCallerUserProfile();
 
-  // Show loader while auth is initializing
-  if (isInitializing) {
-    return <AppLoader />;
-  }
-
-  // Not logged in — show login page
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
-
-  // Logged in but still loading profile
   if (profileLoading) {
     return <AppLoader />;
   }
 
-  // Profile loaded and it's null — first time user, show setup
-  const showProfileSetup =
-    isAuthenticated && profileFetched && profile === null;
+  const showProfileSetup = profileFetched && profile === null;
 
   if (showProfileSetup) {
     return (
@@ -75,6 +93,32 @@ export default function App() {
     );
   }
 
-  // Fully authenticated and profile exists
   return <Dashboard />;
+}
+
+export default function App() {
+  const { identity, isInitializing } = useInternetIdentity();
+  const isAuthenticated = !!identity;
+
+  if (isInitializing) {
+    return (
+      <ThemeProvider>
+        <AppLoader />
+      </ThemeProvider>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <ThemeProvider>
+        <LoginPage />
+      </ThemeProvider>
+    );
+  }
+
+  return (
+    <ThemeProvider>
+      <AuthenticatedApp />
+    </ThemeProvider>
+  );
 }

@@ -1,12 +1,22 @@
 import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, Key } from "lucide-react";
+import { FileText, Key, ShieldCheck } from "lucide-react";
 import { motion } from "motion/react";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
+import { useGetAllAccounts, useGetAllDocuments } from "../hooks/useQueries";
+import { useEnrichment } from "../utils/localEnrichment";
 import AccountsTab from "./AccountsTab";
 import DocumentsTab from "./DocumentsTab";
 import Header from "./Header";
+import SecurityDashboard from "./SecurityDashboard";
 
 export default function Dashboard() {
+  const { identity } = useInternetIdentity();
+  const principalText = identity?.getPrincipal().toText() ?? "";
+  const { enrichment } = useEnrichment(principalText);
+  const { data: accounts = [] } = useGetAllAccounts();
+  const { data: documents = [] } = useGetAllDocuments();
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
@@ -23,7 +33,7 @@ export default function Dashboard() {
               Your Vault
             </h1>
             <p className="text-muted-foreground text-sm mt-1">
-              Manage your accounts and personal documents
+              Manage your accounts, documents, and security
             </p>
           </div>
 
@@ -46,6 +56,14 @@ export default function Dashboard() {
                 <FileText className="w-4 h-4" />
                 Documents
               </TabsTrigger>
+              <TabsTrigger
+                value="security"
+                className="data-[state=active]:bg-teal data-[state=active]:text-background font-medium flex items-center gap-2 px-5"
+                data-ocid="nav.security_tab"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                Security
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="accounts">
@@ -54,6 +72,15 @@ export default function Dashboard() {
 
             <TabsContent value="documents">
               <DocumentsTab />
+            </TabsContent>
+
+            <TabsContent value="security">
+              <SecurityDashboard
+                accounts={accounts}
+                documents={documents}
+                enrichment={enrichment}
+                principalText={principalText}
+              />
             </TabsContent>
           </Tabs>
         </motion.div>

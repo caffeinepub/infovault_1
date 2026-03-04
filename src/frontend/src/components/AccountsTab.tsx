@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -20,8 +21,22 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Check,
   Copy,
@@ -31,13 +46,18 @@ import {
   Key,
   Loader2,
   Plus,
+  RefreshCw,
   Search,
+  ShieldAlert,
+  Star,
   Trash2,
+  Wand2,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import type { Account } from "../backend.d.ts";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
   useCreateAccount,
   useDeleteAccount,
@@ -45,20 +65,116 @@ import {
   useUpdateAccount,
 } from "../hooks/useQueries";
 import { getServiceColor, maskPassword } from "../utils/format";
+import { useEnrichment } from "../utils/localEnrichment";
 
-interface AccountFormData {
-  serviceName: string;
-  username: string;
-  password: string;
-  notes: string;
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const ACCOUNT_CATEGORIES = [
+  "Banking",
+  "Work",
+  "Social",
+  "Shopping",
+  "Entertainment",
+  "Other",
+] as const;
+
+type AccountCategory = (typeof ACCOUNT_CATEGORIES)[number] | "All";
+
+const CATEGORY_COLORS: Record<string, string> = {
+  Banking: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  Work: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  Social: "bg-teal/20 text-teal border-teal/30",
+  Shopping: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  Entertainment: "bg-pink-500/20 text-pink-400 border-pink-500/30",
+  Other: "bg-secondary text-muted-foreground border-border",
+};
+
+// ─── Password utilities ──────────────────────────────────────────────────────
+
+function generatePassword(
+  length: number,
+  opts: {
+    uppercase: boolean;
+    lowercase: boolean;
+    numbers: boolean;
+    symbols: boolean;
+  },
+): string {
+  const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const lower = "abcdefghijklmnopqrstuvwxyz";
+  const numbers = "0123456789";
+  const symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+
+  let charset = "";
+  if (opts.uppercase) charset += upper;
+  if (opts.lowercase) charset += lower;
+  if (opts.numbers) charset += numbers;
+  if (opts.symbols) charset += symbols;
+  if (!charset) charset = lower;
+
+  // Ensure at least one of each required type
+  const required: string[] = [];
+  if (opts.uppercase && upper)
+    required.push(upper[Math.floor(Math.random() * upper.length)]);
+  if (opts.lowercase && lower)
+    required.push(lower[Math.floor(Math.random() * lower.length)]);
+  if (opts.numbers && numbers)
+    required.push(numbers[Math.floor(Math.random() * numbers.length)]);
+  if (opts.symbols && symbols)
+    required.push(symbols[Math.floor(Math.random() * symbols.length)]);
+
+  const remaining = Array.from(
+    { length: Math.max(0, length - required.length) },
+    () => charset[Math.floor(Math.random() * charset.length)],
+  );
+
+  const combined = [...required, ...remaining];
+  // Shuffle
+  for (let i = combined.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [combined[i], combined[j]] = [combined[j], combined[i]];
+  }
+  return combined.join("");
 }
 
-const EMPTY_FORM: AccountFormData = {
-  serviceName: "",
-  username: "",
-  password: "",
-  notes: "",
-};
+interface PasswordStrength {
+  score: 0 | 1 | 2 | 3 | 4;
+  label: string;
+  color: string;
+}
+
+function getPasswordStrength(password: string): PasswordStrength {
+  if (!password) return { score: 0, label: "", color: "" };
+
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  const hasSymbol = /[^A-Za-z0-9]/.test(password);
+  const charTypes = [hasUpper, hasLower, hasNumber, hasSymbol].filter(
+    Boolean,
+  ).length;
+  const len = password.length;
+
+  if (len < 8 || charTypes < 2) {
+    return { score: 1, label: "Weak", color: "bg-red-500" };
+  }
+  if (len >= 8 && charTypes >= 2 && len < 10) {
+    return { score: 2, label: "Fair", color: "bg-orange-400" };
+  }
+  if (len >= 10 && charTypes >= 3 && len < 12) {
+    return { score: 3, label: "Strong", color: "bg-yellow-400" };
+  }
+  if (len >= 12 && charTypes >= 4) {
+    return { score: 4, label: "Very Strong", color: "bg-teal" };
+  }
+  // fallback
+  if (len >= 10 && charTypes >= 3) {
+    return { score: 3, label: "Strong", color: "bg-yellow-400" };
+  }
+  return { score: 2, label: "Fair", color: "bg-orange-400" };
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
 
 function AccountSkeleton() {
   return (
@@ -102,15 +218,225 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+interface PasswordGeneratorProps {
+  onUse: (password: string) => void;
+}
+
+function PasswordGenerator({ onUse }: PasswordGeneratorProps) {
+  const [length, setLength] = useState(16);
+  const [uppercase, setUppercase] = useState(true);
+  const [lowercase, setLowercase] = useState(true);
+  const [numbers, setNumbers] = useState(true);
+  const [symbols, setSymbols] = useState(false);
+  const [preview, setPreview] = useState(() =>
+    generatePassword(16, {
+      uppercase: true,
+      lowercase: true,
+      numbers: true,
+      symbols: false,
+    }),
+  );
+
+  const regenerate = useCallback(() => {
+    setPreview(
+      generatePassword(length, { uppercase, lowercase, numbers, symbols }),
+    );
+  }, [length, uppercase, lowercase, numbers, symbols]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.2 }}
+      className="overflow-hidden"
+      data-ocid="add_account.password_generator.panel"
+    >
+      <div className="mt-2 p-3 rounded-lg border border-teal/30 bg-teal/5 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-teal">
+            Password Generator
+          </span>
+          <button
+            type="button"
+            onClick={regenerate}
+            className="p-1 rounded hover:bg-teal/10 text-teal transition-colors"
+            title="Regenerate"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Preview */}
+        <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2">
+          <span className="font-mono text-xs text-foreground flex-1 truncate">
+            {preview}
+          </span>
+          <CopyButton text={preview} />
+        </div>
+
+        {/* Length slider */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>Length</span>
+            <span className="font-mono font-bold text-foreground">
+              {length}
+            </span>
+          </div>
+          <Slider
+            min={8}
+            max={32}
+            step={1}
+            value={[length]}
+            onValueChange={([v]) => {
+              setLength(v);
+              setPreview(
+                generatePassword(v, { uppercase, lowercase, numbers, symbols }),
+              );
+            }}
+            className="w-full"
+          />
+        </div>
+
+        {/* Checkboxes */}
+        <div className="grid grid-cols-2 gap-1.5">
+          {[
+            {
+              id: "gen-upper",
+              label: "Uppercase",
+              value: uppercase,
+              setter: setUppercase,
+            },
+            {
+              id: "gen-lower",
+              label: "Lowercase",
+              value: lowercase,
+              setter: setLowercase,
+            },
+            {
+              id: "gen-numbers",
+              label: "Numbers",
+              value: numbers,
+              setter: setNumbers,
+            },
+            {
+              id: "gen-symbols",
+              label: "Symbols",
+              value: symbols,
+              setter: setSymbols,
+            },
+          ].map(({ id, label, value, setter }) => (
+            <div key={label} className="flex items-center gap-2">
+              <Checkbox
+                id={id}
+                checked={value}
+                onCheckedChange={(checked) => {
+                  setter(!!checked);
+                  setPreview(
+                    generatePassword(length, {
+                      uppercase: label === "Uppercase" ? !!checked : uppercase,
+                      lowercase: label === "Lowercase" ? !!checked : lowercase,
+                      numbers: label === "Numbers" ? !!checked : numbers,
+                      symbols: label === "Symbols" ? !!checked : symbols,
+                    }),
+                  );
+                }}
+                className="border-teal/40 data-[state=checked]:bg-teal data-[state=checked]:border-teal"
+              />
+              <Label
+                htmlFor={id}
+                className="text-xs text-muted-foreground cursor-pointer"
+              >
+                {label}
+              </Label>
+            </div>
+          ))}
+        </div>
+
+        <Button
+          type="button"
+          size="sm"
+          className="w-full bg-teal hover:bg-teal/90 text-background text-xs font-semibold gap-1.5"
+          onClick={() => onUse(preview)}
+        >
+          <Check className="w-3.5 h-3.5" />
+          Use this password
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+interface StrengthIndicatorProps {
+  password: string;
+}
+
+function StrengthIndicator({ password }: StrengthIndicatorProps) {
+  if (!password) return null;
+  const { score, label, color } = getPasswordStrength(password);
+
+  return (
+    <div
+      className="flex items-center gap-2 mt-1.5"
+      data-ocid="add_account.strength_indicator"
+    >
+      <div className="flex gap-1 flex-1">
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${
+              i <= score ? color : "bg-secondary"
+            }`}
+          />
+        ))}
+      </div>
+      {label && (
+        <span
+          className={`text-xs font-medium ${
+            score === 1
+              ? "text-red-400"
+              : score === 2
+                ? "text-orange-400"
+                : score === 3
+                  ? "text-yellow-400"
+                  : "text-teal"
+          }`}
+        >
+          {label}
+        </span>
+      )}
+    </div>
+  );
+}
+
 interface AccountRowProps {
   account: Account;
   index: number;
   onEdit: (account: Account) => void;
   onDelete: (account: Account) => void;
+  category?: string;
+  isFavorite: boolean;
+  updatedAt?: number;
+  hasBreachAlert: boolean;
+  onToggleFavorite: () => void;
 }
 
-function AccountRow({ account, index, onEdit, onDelete }: AccountRowProps) {
+function AccountRow({
+  account,
+  index,
+  onEdit,
+  onDelete,
+  category,
+  isFavorite,
+  updatedAt,
+  hasBreachAlert,
+  onToggleFavorite,
+}: AccountRowProps) {
   const [showPassword, setShowPassword] = useState(false);
+
+  const updatedDaysAgo = updatedAt
+    ? Math.floor((Date.now() - updatedAt) / (1000 * 60 * 60 * 24))
+    : null;
 
   return (
     <motion.div
@@ -133,9 +459,36 @@ function AccountRow({ account, index, onEdit, onDelete }: AccountRowProps) {
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-foreground text-sm truncate">
-                {account.serviceName}
-              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-semibold text-foreground text-sm truncate">
+                  {account.serviceName}
+                </p>
+                {category && category !== "Other" && (
+                  <Badge
+                    variant="outline"
+                    className={`text-xs px-1.5 py-0 h-4 ${CATEGORY_COLORS[category] ?? CATEGORY_COLORS.Other}`}
+                  >
+                    {category}
+                  </Badge>
+                )}
+                {hasBreachAlert && (
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex"
+                          data-ocid={`accounts.breach_alert.${index}`}
+                        >
+                          <ShieldAlert className="w-3.5 h-3.5 text-red-400 cursor-help" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-popover border-border text-xs">
+                        Weak or reused password
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
               <div className="flex items-center gap-1 mt-0.5">
                 <p className="text-muted-foreground text-xs font-mono truncate">
                   {account.username}
@@ -146,6 +499,23 @@ function AccountRow({ account, index, onEdit, onDelete }: AccountRowProps) {
 
             {/* Actions */}
             <div className="flex items-center gap-1 flex-shrink-0">
+              {/* Favorite star */}
+              <button
+                type="button"
+                onClick={onToggleFavorite}
+                className={`p-1.5 rounded hover:bg-accent transition-colors ${
+                  isFavorite
+                    ? "text-yellow-400"
+                    : "text-muted-foreground opacity-0 group-hover:opacity-100"
+                }`}
+                title={
+                  isFavorite ? "Remove from favorites" : "Add to favorites"
+                }
+              >
+                <Star
+                  className={`w-3.5 h-3.5 ${isFavorite ? "fill-yellow-400" : ""}`}
+                />
+              </button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -195,53 +565,126 @@ function AccountRow({ account, index, onEdit, onDelete }: AccountRowProps) {
             </button>
           </div>
 
-          {/* Notes */}
-          {account.notes && (
-            <p className="mt-2 text-xs text-muted-foreground truncate">
-              {account.notes}
-            </p>
-          )}
+          {/* Notes + updated */}
+          <div className="flex items-center justify-between mt-1.5 gap-2">
+            {account.notes ? (
+              <p className="text-xs text-muted-foreground truncate flex-1">
+                {account.notes}
+              </p>
+            ) : (
+              <span />
+            )}
+            {updatedDaysAgo !== null && (
+              <p className="text-xs text-muted-foreground flex-shrink-0">
+                {updatedDaysAgo === 0
+                  ? "Updated today"
+                  : `Updated ${updatedDaysAgo}d ago`}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>
   );
 }
 
+// ─── Main Component ──────────────────────────────────────────────────────────
+
+interface AccountFormData {
+  serviceName: string;
+  username: string;
+  password: string;
+  notes: string;
+  category: string;
+  twoFactorNotes: string;
+  favorite: boolean;
+}
+
+const EMPTY_FORM: AccountFormData = {
+  serviceName: "",
+  username: "",
+  password: "",
+  notes: "",
+  category: "Other",
+  twoFactorNotes: "",
+  favorite: false,
+};
+
 export default function AccountsTab() {
+  const { identity } = useInternetIdentity();
+  const principalText = identity?.getPrincipal().toText() ?? "";
+  const {
+    enrichment,
+    updateAccount: updateEnrichment,
+    removeAccount,
+  } = useEnrichment(principalText);
+
   const { data: accounts, isLoading, isError } = useGetAllAccounts();
   const createAccount = useCreateAccount();
   const updateAccount = useUpdateAccount();
   const deleteAccount = useDeleteAccount();
 
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<AccountCategory>("All");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [form, setForm] = useState<AccountFormData>(EMPTY_FORM);
   const [showFormPassword, setShowFormPassword] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
 
-  const filtered = (accounts ?? []).filter(
-    (a) =>
+  const allAccounts = accounts ?? [];
+
+  // Get breach info for all accounts
+  const breachMap = new Map<string, boolean>();
+  for (const account of allAccounts) {
+    const weak = account.password.length < 8;
+    const reused =
+      allAccounts.filter(
+        (a) => a.id !== account.id && a.password === account.password,
+      ).length > 0;
+    breachMap.set(account.id, weak || reused);
+  }
+
+  // Sort: favorites first
+  const sortedAccounts = [...allAccounts].sort((a, b) => {
+    const aFav = enrichment.accounts[a.id]?.favorite ? 1 : 0;
+    const bFav = enrichment.accounts[b.id]?.favorite ? 1 : 0;
+    return bFav - aFav;
+  });
+
+  const filtered = sortedAccounts.filter((a) => {
+    const matchesSearch =
       a.serviceName.toLowerCase().includes(search.toLowerCase()) ||
-      a.username.toLowerCase().includes(search.toLowerCase()),
-  );
+      a.username.toLowerCase().includes(search.toLowerCase());
+    const matchesCategory =
+      categoryFilter === "All" ||
+      (enrichment.accounts[a.id]?.category ?? "Other") === categoryFilter;
+    return matchesSearch && matchesCategory;
+  });
 
   const handleOpenAdd = () => {
     setEditingAccount(null);
     setForm(EMPTY_FORM);
     setShowFormPassword(false);
+    setShowGenerator(false);
     setModalOpen(true);
   };
 
   const handleOpenEdit = (account: Account) => {
     setEditingAccount(account);
+    const e = enrichment.accounts[account.id] ?? {};
     setForm({
       serviceName: account.serviceName,
       username: account.username,
       password: account.password,
       notes: account.notes,
+      category: e.category ?? "Other",
+      twoFactorNotes: e.twoFactorNotes ?? "",
+      favorite: e.favorite ?? false,
     });
     setShowFormPassword(false);
+    setShowGenerator(false);
     setModalOpen(true);
   };
 
@@ -257,16 +700,33 @@ export default function AccountsTab() {
     }
 
     try {
+      let accountId: string;
       if (editingAccount) {
         await updateAccount.mutateAsync({
           id: editingAccount.id,
-          ...form,
+          serviceName: form.serviceName,
+          username: form.username,
+          password: form.password,
+          notes: form.notes,
         });
+        accountId = editingAccount.id;
         toast.success("Account updated");
       } else {
-        await createAccount.mutateAsync(form);
+        accountId = await createAccount.mutateAsync({
+          serviceName: form.serviceName,
+          username: form.username,
+          password: form.password,
+          notes: form.notes,
+        });
         toast.success("Account added to vault");
       }
+      // Save enrichment
+      updateEnrichment(accountId, {
+        category: form.category,
+        twoFactorNotes: form.twoFactorNotes,
+        favorite: form.favorite,
+        updatedAt: Date.now(),
+      });
       setModalOpen(false);
     } catch {
       toast.error("Failed to save account. Please try again.");
@@ -277,6 +737,7 @@ export default function AccountsTab() {
     if (!deleteTarget) return;
     try {
       await deleteAccount.mutateAsync(deleteTarget.id);
+      removeAccount(deleteTarget.id);
       toast.success(`Deleted ${deleteTarget.serviceName}`);
       setDeleteTarget(null);
     } catch {
@@ -289,8 +750,8 @@ export default function AccountsTab() {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
           <Input
             placeholder="Search accounts..."
@@ -300,6 +761,25 @@ export default function AccountsTab() {
             data-ocid="accounts.search_input"
           />
         </div>
+        <Select
+          value={categoryFilter}
+          onValueChange={(v) => setCategoryFilter(v as AccountCategory)}
+        >
+          <SelectTrigger
+            className="w-[160px] bg-secondary border-border text-foreground"
+            data-ocid="accounts.category_select"
+          >
+            <SelectValue placeholder="All Categories" />
+          </SelectTrigger>
+          <SelectContent className="bg-popover border-border">
+            <SelectItem value="All">All Categories</SelectItem>
+            {ACCOUNT_CATEGORIES.map((cat) => (
+              <SelectItem key={cat} value={cat}>
+                {cat}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           className="bg-teal hover:bg-teal/90 text-background font-semibold flex-shrink-0 gap-2"
           onClick={handleOpenAdd}
@@ -312,15 +792,16 @@ export default function AccountsTab() {
       </div>
 
       {/* Stats */}
-      {!isLoading && accounts && accounts.length > 0 && (
-        <div className="flex items-center gap-3">
+      {!isLoading && allAccounts.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
           <Badge
             variant="secondary"
             className="text-xs bg-secondary text-muted-foreground"
           >
-            {accounts.length} account{accounts.length !== 1 ? "s" : ""} stored
+            {allAccounts.length} account{allAccounts.length !== 1 ? "s" : ""}{" "}
+            stored
           </Badge>
-          {search && (
+          {(search || categoryFilter !== "All") && (
             <Badge
               variant="outline"
               className="text-xs border-teal/30 text-teal"
@@ -365,14 +846,18 @@ export default function AccountsTab() {
             <Key className="w-8 h-8 text-teal" />
           </div>
           <h3 className="font-display font-semibold text-foreground mb-2">
-            {search ? "No matching accounts" : "No accounts yet"}
+            {search || categoryFilter !== "All"
+              ? "No matching accounts"
+              : "No accounts yet"}
           </h3>
           <p className="text-muted-foreground text-sm mb-5">
             {search
               ? `No accounts match "${search}"`
-              : "Add your first account to start building your secure vault"}
+              : categoryFilter !== "All"
+                ? `No accounts in the "${categoryFilter}" category`
+                : "Add your first account to start building your secure vault"}
           </p>
-          {!search && (
+          {!search && categoryFilter === "All" && (
             <Button
               className="bg-teal hover:bg-teal/90 text-background font-semibold gap-2"
               onClick={handleOpenAdd}
@@ -388,15 +873,25 @@ export default function AccountsTab() {
       {!isLoading && !isError && filtered.length > 0 && (
         <AnimatePresence mode="popLayout">
           <div className="space-y-2">
-            {filtered.map((account, i) => (
-              <AccountRow
-                key={account.id}
-                account={account}
-                index={i + 1}
-                onEdit={handleOpenEdit}
-                onDelete={setDeleteTarget}
-              />
-            ))}
+            {filtered.map((account, i) => {
+              const e = enrichment.accounts[account.id] ?? {};
+              return (
+                <AccountRow
+                  key={account.id}
+                  account={account}
+                  index={i + 1}
+                  onEdit={handleOpenEdit}
+                  onDelete={setDeleteTarget}
+                  category={e.category}
+                  isFavorite={!!e.favorite}
+                  updatedAt={e.updatedAt}
+                  hasBreachAlert={!!breachMap.get(account.id)}
+                  onToggleFavorite={() =>
+                    updateEnrichment(account.id, { favorite: !e.favorite })
+                  }
+                />
+              );
+            })}
           </div>
         </AnimatePresence>
       )}
@@ -404,14 +899,33 @@ export default function AccountsTab() {
       {/* Add/Edit Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent
-          className="bg-card border-border sm:max-w-md"
+          className="bg-card border-border sm:max-w-lg max-h-[90vh] overflow-y-auto"
           data-ocid="add_account.modal"
         >
           <DialogHeader>
-            <DialogTitle className="font-display text-foreground flex items-center gap-2">
-              <Key className="w-5 h-5 text-teal" />
-              {editingAccount ? "Edit Account" : "Add Account"}
-            </DialogTitle>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="font-display text-foreground flex items-center gap-2">
+                <Key className="w-5 h-5 text-teal" />
+                {editingAccount ? "Edit Account" : "Add Account"}
+              </DialogTitle>
+              {/* Favorite toggle in header */}
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((f) => ({ ...f, favorite: !f.favorite }))
+                }
+                className={`p-1.5 rounded hover:bg-accent transition-colors mr-6 ${
+                  form.favorite ? "text-yellow-400" : "text-muted-foreground"
+                }`}
+                title={
+                  form.favorite ? "Remove from favorites" : "Mark as favorite"
+                }
+              >
+                <Star
+                  className={`w-5 h-5 ${form.favorite ? "fill-yellow-400" : ""}`}
+                />
+              </button>
+            </div>
             <DialogDescription className="text-muted-foreground">
               {editingAccount
                 ? "Update the credentials for this account"
@@ -480,6 +994,57 @@ export default function AccountsTab() {
                   )}
                 </button>
               </div>
+              {/* Strength indicator */}
+              <StrengthIndicator password={form.password} />
+              {/* Generate button */}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs border-teal/30 text-teal hover:bg-teal/10 hover:text-teal"
+                onClick={() => setShowGenerator((v) => !v)}
+                data-ocid="add_account.generate_button"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                {showGenerator ? "Hide Generator" : "Generate Password"}
+              </Button>
+              {/* Generator panel */}
+              <AnimatePresence>
+                {showGenerator && (
+                  <PasswordGenerator
+                    onUse={(password) => {
+                      setForm((f) => ({ ...f, password }));
+                      setShowGenerator(false);
+                    }}
+                  />
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Category */}
+            <div className="space-y-2">
+              <Label htmlFor="category" className="text-foreground text-sm">
+                Category
+              </Label>
+              <Select
+                value={form.category}
+                onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}
+              >
+                <SelectTrigger
+                  id="category"
+                  className="bg-secondary border-border text-foreground"
+                  data-ocid="add_account.category_select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {ACCOUNT_CATEGORIES.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
@@ -496,6 +1061,24 @@ export default function AccountsTab() {
                 className="bg-secondary border-border text-foreground resize-none"
                 rows={2}
                 data-ocid="add_account.notes_input"
+              />
+            </div>
+
+            {/* Two-factor notes */}
+            <div className="space-y-2">
+              <Label htmlFor="twofa" className="text-foreground text-sm">
+                Two-Factor Auth Notes
+              </Label>
+              <Textarea
+                id="twofa"
+                placeholder="Store backup codes or TOTP secret here..."
+                value={form.twoFactorNotes}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, twoFactorNotes: e.target.value }))
+                }
+                className="bg-secondary border-border text-foreground resize-none font-mono"
+                rows={2}
+                data-ocid="add_account.twofa_input"
               />
             </div>
 

@@ -229,7 +229,7 @@ export default function LoginPage() {
             <div className="flex items-center gap-3 mb-8">
               <div className="w-10 h-10 rounded-lg bg-teal/20 border border-teal/30 flex items-center justify-center">
                 <img
-                  src="/assets/generated/infovault-logo-transparent.dim_64x64.png"
+                  src="/assets/uploads/original-358c449a1d214658481ee0571a00d34c-2-1.gif"
                   alt="InfoVault"
                   className="w-7 h-7 object-contain"
                 />
